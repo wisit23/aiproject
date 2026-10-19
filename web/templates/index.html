@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Image Restoration Demo</title>
+<style>
+  :root { --bg:#0f1115; --card:#181b22; --line:#2a2f3a; --text:#e6e8ee; --muted:#8b93a7; --accent:#5b8cff; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,"Segoe UI",sans-serif; background:var(--bg); color:var(--text); }
+  header { padding:24px 32px; border-bottom:1px solid var(--line); }
+  header h1 { margin:0; font-size:22px; }
+  header p { margin:4px 0 0; color:var(--muted); font-size:14px; }
+  main { display:grid; grid-template-columns:320px 1fr; gap:24px; padding:24px 32px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:20px; }
+  h2 { font-size:14px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin:0 0 12px; }
+  .group { margin-bottom:20px; }
+  label { display:flex; justify-content:space-between; font-size:14px; margin-bottom:6px; }
+  label span { color:var(--accent); font-variant-numeric:tabular-nums; }
+  input[type=range] { width:100%; accent-color:var(--accent); }
+  select, button { width:100%; padding:10px; border-radius:8px; border:1px solid var(--line); background:#0f1115; color:var(--text); font-size:14px; }
+  button { background:var(--accent); border:none; font-weight:600; cursor:pointer; }
+  button:disabled { opacity:.5; cursor:wait; }
+  .seg { display:flex; gap:6px; }
+  .seg button { background:#0f1115; border:1px solid var(--line); font-weight:500; }
+  .seg button { padding:8px 0; }
+  .seg.off { opacity:.4; }
+  .seg button.on { background:var(--accent); border-color:var(--accent); }
+  #drop { border:2px dashed var(--line); border-radius:10px; padding:18px; text-align:center; cursor:pointer; color:var(--muted); font-size:14px; }
+  #drop.over { border-color:var(--accent); }
+  #drop img { max-width:100%; max-height:140px; border-radius:6px; display:block; margin:0 auto 8px; }
+  .results { display:grid; grid-template-columns:repeat(3,1fr); gap:16px; }
+  figure { margin:0; }
+  figure .img { aspect-ratio:1; background:#0f1115; border:1px solid var(--line); border-radius:8px; display:flex; align-items:center; justify-content:center; color:var(--muted); font-size:13px; overflow:hidden; }
+  figure img { width:100%; height:100%; image-rendering:pixelated; object-fit:contain; }
+  figcaption { margin-top:8px; font-size:14px; font-weight:600; }
+  .m { font-size:13px; color:var(--muted); margin-top:2px; font-variant-numeric:tabular-nums; }
+  .gain { color:#4ade80; } .loss { color:#f87171; }
+  .err { color:#f87171; font-size:13px; margin-top:12px; white-space:pre-wrap; }
+  .hint { font-size:12px; color:var(--muted); margin-top:6px; }
+  @media (max-width:900px){ main{grid-template-columns:1fr} .results{grid-template-columns:1fr} }
+</style>
+</head>
+<body>
+<header>
+  <h1>Image Restoration Demo</h1>
+  <p>Denoise / Deblur ด้วย U-Net — ใส่ภาพ, เพิ่ม noise และเบลอ, แล้วให้โมเดลกู้คืนภาพ</p>
+</header>
+<main>
+  <section class="card">
+    <div class="group">
+      <h2>1. รูปภาพ</h2>
+      <input id="file" type="file" accept="image/*" hidden><div id="drop">คลิกหรือลากรูปมาวาง</div>
+    </div>
+
+    <div class="group">
+      <h2>2. ขนาด</h2>
+      <div class="seg" id="size">
+        <button data-v="64">64</button><button data-v="128" class="on">128</button><button data-v="256">256</button><button data-v="512">512</button>
+      </div>
+      <div class="hint">ครอปตรงกลางให้เป็นสี่เหลี่ยมจัตุรัสก่อนย่อ</div>
+    </div>
+
+    <div class="group">
+      <h2>3. Noise &amp; Blur</h2>
+      <label>Gaussian noise σ <span id="noiseV">20</span></label>
+      <input id="noise" type="range" min="0" max="50" step="1" value="20">
+      <label style="margin-top:12px">Blur σ <span id="blurV">0</span></label>
+      <input id="blur" type="range" min="0" max="5" step="0.1" value="0">
+      <label style="margin-top:12px">Blur kernel <span id="kV">7×7</span></label>
+      <div class="seg" id="k">
+        <button data-v="3">3</button><button data-v="5">5</button><button data-v="7" class="on">7</button><button data-v="9">9</button><button data-v="11">11</button><button data-v="13">13</button><button data-v="15">15</button>
+      </div>
+      <div class="hint">โมเดลเทรนด้วย noise σ 10–30, blur σ 1–3, kernel 5–11</div>
+    </div>
+
+    <div class="group">
+      <h2>4. โมเดล AI</h2>
+      <select id="model"></select>
+      <div class="hint">วางไฟล์ .keras / .h5 / .py ในโฟลเดอร์ web/models</div>
+    </div>
+
+    <button id="run" disabled>ประมวลผล</button>
+    <div class="err" id="err"></div>
+  </section>
+
+  <section class="card">
+    <h2>ผลลัพธ์</h2>
+    <div class="results">
+      <figure><div class="img" id="o1">ภาพต้นฉบับ</div><figcaption>Original</figcaption><div class="m">อ้างอิง</div></figure>
+      <figure><div class="img" id="o2">—</div><figcaption>Degraded</figcaption><div class="m" id="m2"></div></figure>
+      <figure><div class="img" id="o3">—</div><figcaption>Restored (AI)</figcaption><div class="m" id="m3"></div></figure>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+let file = null, size = 128, timer = null, reqId = 0;
+
+// models
+fetch('/api/models').then(r => r.json()).then(list => {
+  $('model').innerHTML = '<option value="">— ไม่ใช้โมเดล —</option>' +
+    list.map(m => `<option>${m}</option>`).join('');
+  if (list.length) $('model').value = list[0];
+});
+
+// file input
+const drop = $('drop');
+drop.onclick = () => $('file').click();
+$('file').onchange = e => setFile(e.target.files[0]);
+drop.ondragover = e => { e.preventDefault(); drop.classList.add('over'); };
+drop.ondragleave = () => drop.classList.remove('over');
+drop.ondrop = e => { e.preventDefault(); drop.classList.remove('over'); setFile(e.dataTransfer.files[0]); };
+function setFile(f) {
+  if (!f) return;
+  file = f;
+  drop.innerHTML = `<img src="${URL.createObjectURL(f)}">${f.name}`;
+  $('run').disabled = false;
+  run();
+}
+
+// controls
+$('size').onclick = e => {
+  if (!e.target.dataset.v) return;
+  [...$('size').children].forEach(b => b.classList.toggle('on', b === e.target));
+  size = +e.target.dataset.v; schedule();
+};
+[['noise','noiseV'],['blur','blurV']].forEach(([i, v]) =>
+  $(i).oninput = () => { $(v).textContent = $(i).value; schedule(); });
+let kernel = 7;
+$('k').onclick = e => {
+  if (!e.target.dataset.v) return;
+  [...$('k').children].forEach(b => b.classList.toggle('on', b === e.target));
+  kernel = +e.target.dataset.v; $('kV').textContent = `${kernel}×${kernel}`; schedule();
+};
+// kernel only matters when blur σ > 0
+const syncKernel = () => $('k').classList.toggle('off', +$('blur').value === 0);
+$('blur').addEventListener('input', syncKernel); syncKernel();
+$('model').onchange = schedule;
+$('run').onclick = run;
+
+function schedule() { clearTimeout(timer); timer = setTimeout(run, 350); }
+
+const fmt = m => m ? `PSNR ${m.psnr ?? '∞'} dB · SSIM ${m.ssim}` : '';
+const show = (id, src) => $(id).innerHTML = src ? `<img src="${src}">` : '—';
+
+async function run() {
+  if (!file) return;
+  const fd = new FormData();
+  fd.append('image', file); fd.append('size', size);
+  fd.append('noise', $('noise').value); fd.append('blur_sigma', $('blur').value);
+  fd.append('blur_k', kernel); fd.append('model', $('model').value);
+  const id = ++reqId;
+  $('run').disabled = true; $('run').textContent = 'กำลังประมวลผล...'; $('err').textContent = '';
+  try {
+    const res = await fetch('/api/process', { method: 'POST', body: fd });
+    const r = await res.json();
+    if (id !== reqId) return;  // a newer request is running
+    show('o1', r.clean); show('o2', r.degraded); show('o3', r.restored);
+    $('m2').textContent = fmt(r.degraded_metrics);
+    if (r.restored_metrics) {
+      const d = (r.restored_metrics.psnr - r.degraded_metrics.psnr).toFixed(2);
+      $('m3').innerHTML = `${fmt(r.restored_metrics)} <span class="${d >= 0 ? 'gain' : 'loss'}">(${d >= 0 ? '+' : ''}${d} dB)</span>`;
+    } else $('m3').textContent = '';
+    if (r.error) $('err').textContent = r.error;
+  } catch (e) { if (id === reqId) $('err').textContent = e.message; }
+  if (id !== reqId) return;
+  $('run').disabled = false; $('run').textContent = 'ประมวลผล';
+}
+</script>
+</body>
+</html>
