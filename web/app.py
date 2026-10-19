@@ -1,5 +1,5 @@
 """Image restoration demo: resize -> add noise/blur -> run selected model -> show results."""
-import base64, importlib.util, io, os
+import base64, importlib.util, io, os, sys
 
 # oneDNN makes this TensorFlow build ~100x slower on CPU
 os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
@@ -11,7 +11,9 @@ from flask import Flask, jsonify, render_template, request
 from PIL import Image
 
 BASE = Path(__file__).parent
-MODELS_DIR = BASE / "models"
+MODELS_DIR = BASE / "models"      # one entry-point file per selectable model
+WEIGHTS_DIR = BASE / "weights"    # checkpoints (.pth / .h5)
+sys.path.insert(0, str(BASE))     # lets models/*.py do `from archs.x import ...`
 app = Flask(__name__)
 _cache = {}
 
@@ -36,7 +38,7 @@ def add_blur(img, ksize, sigma):
 def list_models():
     """Any .keras/.h5 file, or a .py file with predict(img_float01) [and optional load()]."""
     items = [p for p in MODELS_DIR.iterdir() if p.suffix in {".keras", ".h5", ".py"}]
-    return sorted(p.name for p in items if not p.name.startswith("_") and not p.name.endswith(".weights.h5"))
+    return sorted(p.name for p in items if not p.name.startswith("_"))
 
 
 def get_model(name):
@@ -48,7 +50,7 @@ def get_model(name):
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
         if hasattr(mod, "load"):
-            mod.load(MODELS_DIR)
+            mod.load(WEIGHTS_DIR)
         fn = mod.predict
     else:
         import tensorflow as tf
