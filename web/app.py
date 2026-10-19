@@ -64,21 +64,36 @@ def get_model(name):
 
 
 def run_tiled(model, x, tile):
-    """Model was trained on 128x128; bigger images are split into tiles."""
+    """Model was trained on 128x128; bigger images are split into 50%-overlapping
+    tiles and blended with a Hann window so tile seams disappear."""
     h, w = x.shape[:2]
     if not tile or (h == tile and w == tile):
         return model(x[None], training=False).numpy()[0]
-    ph, pw = -h % tile, -w % tile
-    xp = np.pad(x, ((0, ph), (0, pw), (0, 0)), mode="reflect")
-    tiles, pos = [], []
-    for i in range(0, xp.shape[0], tile):
-        for j in range(0, xp.shape[1], tile):
-            tiles.append(xp[i:i + tile, j:j + tile]); pos.append((i, j))
-    preds = model(np.stack(tiles), training=False).numpy()
+    stride, m = tile // 2, tile // 4
+    # margin so image borders aren't at the low-weight edge of a window
+    xp = np.pad(x, ((m, m), (m, m), (0, 0)), mode="reflect")
+    H, W = xp.shape[:2]
+    ph = max(tile - H, 0) + (-(max(H, tile) - tile)) % stride
+    pw = max(tile - W, 0) + (-(max(W, tile) - tile)) % stride
+    xp = np.pad(xp, ((0, ph), (0, pw), (0, 0)), mode="reflect")
+    H, W = xp.shape[:2]
+
+    win1 = np.hanning(tile + 2)[1:-1].astype(np.float32)  # strictly > 0
+    win = (win1[:, None] * win1[None, :])[:, :, None]
+
+    pos = [(i, j) for i in range(0, H - tile + 1, stride)
+                  for j in range(0, W - tile + 1, stride)]
     out = np.zeros_like(xp)
-    for (i, j), p in zip(pos, preds):
-        out[i:i + tile, j:j + tile] = p
-    return out[:h, :w]
+    wsum = np.zeros(xp.shape[:2] + (1,), np.float32)
+    for k in range(0, len(pos), 32):  # batch to cap memory
+        chunk = pos[k:k + 32]
+        preds = model(np.stack([xp[i:i + tile, j:j + tile] for i, j in chunk]),
+                      training=False).numpy()
+        for (i, j), p in zip(chunk, preds):
+            out[i:i + tile, j:j + tile] += p * win
+            wsum[i:i + tile, j:j + tile] += win
+    out /= wsum
+    return out[m:m + h, m:m + w]
 
 
 # ---------- helpers ----------
